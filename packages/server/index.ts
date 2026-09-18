@@ -1,18 +1,10 @@
 import express from 'express';
 import type { Request, Response } from 'express';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai';
 import z from 'zod';
-import {
-   conversationRepository,
-   type Turn,
-} from './repositories/conversation.repository';
+import { chatService } from './services/chat.service';
 
 dotenv.config();
-
-const ai = new GoogleGenAI({
-   apiKey: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY,
-});
 
 const app = express();
 app.use(express.json());
@@ -44,34 +36,17 @@ app.post('/api/chat', async (req: Request, res: Response) => {
 
    try {
       const { prompt, conversationId } = parseResult.data;
+      const response = await chatService.sendMessage(prompt, conversationId);
+      const result = {
+         conversationId: response.conversationId,
+         message: response.message,
+      };
 
-      const id = conversationId ?? conversationRepository.create();
-      const history = conversationRepository.getHistory(id);
-
-      const nextHistory: Turn[] = [
-         ...history,
-         { role: 'user', parts: [{ text: prompt }] },
-      ];
-
-      const response = await ai.models.generateContent({
-         model: 'gemini-2.0-flash',
-         contents: nextHistory,
-      });
-
-      const text = response.text ?? '';
-
-      nextHistory.push({ role: 'model', parts: [{ text }] });
-      conversationRepository.saveHistory(id, nextHistory);
-
-      return res.json({
-         conversationId: id,
-         message: text,
-      });
+      return res.json(result);
    } catch (err) {
       console.error('CHAT ERROR:', err);
       return res.status(500).json({
-         error:
-            err instanceof Error ? err.message : 'Failed to generate response',
+         error: err instanceof Error ? err.message : 'Failed',
       });
    }
 });
@@ -80,7 +55,10 @@ app.listen(port, () => {
    console.log(`Server is running on http://localhost:${port}`);
 });
 
-/*                "conversationId":"69178b3f-5b9a-42f1-bdd7-cf9d4eae5f1d"
+/*     
+gemini-3.7-flash or gemini-3.5-flash-lite
+
+           "conversationId":"69178b3f-5b9a-42f1-bdd7-cf9d4eae5f1d"
                   7181c15c-d212-4340-b344-56441d656a93
 // Open AI API Key:
 import express from "express";
