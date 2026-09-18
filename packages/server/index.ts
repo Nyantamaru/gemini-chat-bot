@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import { randomUUID } from 'crypto';
 import { GoogleGenAI } from '@google/genai';
+import z from 'zod';
 
 dotenv.config();
 
@@ -21,51 +22,61 @@ app.get('/', (_req: Request, res: Response) => {
    res.send('HELLO BUN!');
 });
 
+const chatSchema = z.object({
+   prompt: z
+      .string()
+      .trim()
+      .min(1, 'Prompt is required')
+      .max(1000, 'Prompt is too long(max 1000 characters)'),
+   conversationId: z.uuid().optional(),
+});
 app.post('/api/chat', async (req: Request, res: Response) => {
+   const parseResult = chatSchema.safeParse(req.body);
+
+   if (!parseResult.success) {
+      // ALWAYS send a response on validation failure
+      return res.status(400).json({
+         error: 'Invalid request',
+         details: z.treeifyError(parseResult.error),
+         // human-readable list, if you want it:
+         messages: parseResult.error.issues.map((i) => i.message),
+      });
+   }
    try {
-      const { prompt, conversationId } = req.body as {
-         prompt?: string;
-         conversationId?: string;
-      };
+      const { prompt, conversationId } = parseResult.data;
 
-      if (typeof prompt !== 'string' || !prompt.trim()) {
-         return res.status(400).json({ error: 'prompt is required' });
-      }
-
-      // use existing id or create a new conversation
-      const id =
-         typeof conversationId === 'string' && conversationId
-            ? conversationId
-            : randomUUID();
-
+      const id = conversationId ?? randomUUID();
       const history = conversations.get(id) ?? [];
 
       history.push({ role: 'user', parts: [{ text: prompt }] });
 
       const response = await ai.models.generateContent({
-         model: 'gemini-3.7-flash',
+         model: 'gemini-2.0-flash',
          contents: history,
       });
 
       const text = response.text ?? '';
       history.push({ role: 'model', parts: [{ text }] });
-
       conversations.set(id, history);
 
-      res.json({
+      return res.json({
          conversationId: id,
          message: text,
       });
    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Failed to generate response' });
+      console.error('CHAT ERROR:', err);
+      return res.status(500).json({
+         error: err instanceof Error ? err.message : 'Failed',
+      });
    }
 });
 
 app.listen(port, () => {
    console.log(`Server is running on http://localhost:${port}`);
 });
-/*
+
+/*                "conversationId":"69178b3f-5b9a-42f1-bdd7-cf9d4eae5f1d"
+                  7181c15c-d212-4340-b344-56441d656a93
 // Open AI API Key:
 import express from "express";
 import type { Request, Response } from "express";
