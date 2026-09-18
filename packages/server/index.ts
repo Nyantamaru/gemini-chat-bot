@@ -1,63 +1,67 @@
 import express from 'express';
 import type { Request, Response } from 'express';
 import dotenv from 'dotenv';
-import { randomUUID } from 'crypto';
 import { GoogleGenAI } from '@google/genai';
 import z from 'zod';
+import {
+   conversationRepository,
+   type Turn,
+} from './repositories/conversation.repository';
 
 dotenv.config();
 
-const ai = new GoogleGenAI({});
+const ai = new GoogleGenAI({
+   apiKey: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY,
+});
 
 const app = express();
 app.use(express.json());
 const port = process.env.PORT || 3000;
-
-type Turn = { role: 'user' | 'model'; parts: [{ text: string }] };
-
-// conversationId -> message history
-const conversations = new Map<string, Turn[]>();
-
-app.get('/', (_req: Request, res: Response) => {
-   res.send('HELLO BUN!');
-});
 
 const chatSchema = z.object({
    prompt: z
       .string()
       .trim()
       .min(1, 'Prompt is required')
-      .max(1000, 'Prompt is too long(max 1000 characters)'),
+      .max(1000, 'Prompt is too long (max 1000 characters)'),
    conversationId: z.uuid().optional(),
 });
+
+app.get('/', (_req: Request, res: Response) => {
+   res.send('HELLO BUN!');
+});
+
 app.post('/api/chat', async (req: Request, res: Response) => {
    const parseResult = chatSchema.safeParse(req.body);
 
    if (!parseResult.success) {
-      // ALWAYS send a response on validation failure
       return res.status(400).json({
          error: 'Invalid request',
          details: z.treeifyError(parseResult.error),
-         // human-readable list, if you want it:
          messages: parseResult.error.issues.map((i) => i.message),
       });
    }
+
    try {
       const { prompt, conversationId } = parseResult.data;
 
-      const id = conversationId ?? randomUUID();
-      const history = conversations.get(id) ?? [];
+      const id = conversationId ?? conversationRepository.create();
+      const history = conversationRepository.getHistory(id);
 
-      history.push({ role: 'user', parts: [{ text: prompt }] });
+      const nextHistory: Turn[] = [
+         ...history,
+         { role: 'user', parts: [{ text: prompt }] },
+      ];
 
       const response = await ai.models.generateContent({
          model: 'gemini-2.0-flash',
-         contents: history,
+         contents: nextHistory,
       });
 
       const text = response.text ?? '';
-      history.push({ role: 'model', parts: [{ text }] });
-      conversations.set(id, history);
+
+      nextHistory.push({ role: 'model', parts: [{ text }] });
+      conversationRepository.saveHistory(id, nextHistory);
 
       return res.json({
          conversationId: id,
@@ -66,7 +70,8 @@ app.post('/api/chat', async (req: Request, res: Response) => {
    } catch (err) {
       console.error('CHAT ERROR:', err);
       return res.status(500).json({
-         error: err instanceof Error ? err.message : 'Failed',
+         error:
+            err instanceof Error ? err.message : 'Failed to generate response',
       });
    }
 });
